@@ -1,9 +1,10 @@
 import type { ArtistPreference } from "@/lib/artist-preferences";
 
-export type SimilarArtistMeta = {
+export type TasteMeta = {
   basedOn: string;
   avgFun: number;
   showCount: number;
+  genreName: string;
 };
 
 export type RecommendedArtist = {
@@ -39,17 +40,15 @@ export function isArtistAlreadySeen(
 /** Taste-only score — how likely you'd enjoy this new artist */
 export function scoreRecommendedArtist(
   artistName: string,
-  meta: SimilarArtistMeta
+  meta: TasteMeta
 ): RecommendedArtist {
-  const score = Math.round(
-    40 + meta.avgFun * 10 + meta.showCount * 8
-  );
+  const score = Math.round(38 + meta.avgFun * 10 + meta.showCount * 8);
   return {
     name: artistName,
     matchScore: score,
     basedOn: meta.basedOn,
     matchReasons: [
-      `Similar sound to ${meta.basedOn} — you rated them ${meta.avgFun}/10 fun`,
+      `${meta.genreName} artist — like ${meta.basedOn} (you rated ${meta.avgFun}/10 fun)`,
       meta.showCount > 1
         ? `You've been to ${meta.showCount} ${meta.basedOn} shows`
         : `You logged a ${meta.basedOn} concert`,

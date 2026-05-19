@@ -11,7 +11,7 @@ type ArtistsResponse = {
   artists: RecommendedArtist[];
   preferences: ArtistPreference[];
   needsConcerts?: boolean;
-  needsLastFm?: boolean;
+  needsApiKey?: boolean;
   showsApiConfigured?: boolean;
 };
 
@@ -113,15 +113,15 @@ export function RecommendationsView() {
     );
   }
 
-  if (data?.needsLastFm) {
+  if (data?.needsApiKey) {
     return (
       <div className="space-y-6">
         <div className="alert alert-info">
           <div>
-            <p className="font-medium">Last.fm key needed for artist matching</p>
+            <p className="font-medium">Ticketmaster key needed</p>
             <p className="text-sm mt-1">
-              We compare your logged artists to similar artists you haven&apos;t seen
-              yet. Location is not used — only your concert taste.
+              We use Ticketmaster to find artists in the same music style as concerts
+              you&apos;ve logged. No Last.fm account required.
             </p>
           </div>
         </div>
@@ -131,7 +131,7 @@ export function RecommendationsView() {
             <ArtistTasteList preferences={data.preferences} />
           </section>
         ) : null}
-        <LastFmSetup />
+        <TicketmasterSetup />
       </div>
     );
   }
@@ -142,9 +142,9 @@ export function RecommendationsView() {
     <div className="space-y-6">
       <div className="alert alert-success alert-outline text-sm">
         <span>
-          Artists you <strong>haven&apos;t seen yet</strong>, picked only from who
-          you&apos;ve gone to before — not from where you live. Tap an artist to see
-          where they&apos;re playing.
+          Artists you <strong>haven&apos;t seen yet</strong>, matched by Ticketmaster
+          music style (same genre as shows you loved). Tap an artist to see where
+          they&apos;re playing.
         </span>
       </div>
 
@@ -263,12 +263,6 @@ export function RecommendationsView() {
         </section>
       ) : null}
 
-      {!data.showsApiConfigured ? (
-        <p className="text-xs opacity-60">
-          Add <code className="bg-base-200 px-1 rounded">TICKETMASTER_API_KEY</code>{" "}
-          to load show locations when you tap an artist.
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -294,37 +288,30 @@ function ArtistTasteList({
   );
 }
 
-function LastFmSetup() {
+function TicketmasterSetup() {
   return (
     <div className="card bg-base-100 shadow">
       <div className="card-body text-sm gap-2">
         <h3 className="font-semibold">Setup (free)</h3>
         <ol className="list-decimal list-inside space-y-1 opacity-90">
           <li>
-            Create a key at{" "}
+            Get a key at{" "}
             <a
               className="link link-primary"
-              href="https://www.last.fm/api/account/create"
+              href="https://developer.ticketmaster.com/"
               target="_blank"
               rel="noopener noreferrer"
             >
-              last.fm/api
+              developer.ticketmaster.com
             </a>
           </li>
           <li>
             Add{" "}
             <code className="text-xs bg-base-200 px-1 rounded">
-              LASTFM_API_KEY=your_key
+              TICKETMASTER_API_KEY=your_key
             </code>{" "}
             to <code className="text-xs bg-base-200 px-1 rounded">.env.local</code>{" "}
             and Vercel
-          </li>
-          <li>
-            Optional:{" "}
-            <code className="text-xs bg-base-200 px-1 rounded">
-              TICKETMASTER_API_KEY
-            </code>{" "}
-            to show venues when you tap an artist
           </li>
           <li>Restart dev server or redeploy</li>
         </ol>
