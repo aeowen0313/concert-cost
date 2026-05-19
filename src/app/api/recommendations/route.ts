@@ -1,20 +1,15 @@
 import { NextResponse } from "next/server";
-import {
-  buildArtistPreferences,
-  getFrequentRegions,
-} from "@/lib/artist-preferences";
+import { buildArtistPreferences } from "@/lib/artist-preferences";
 import { fetchSimilarArtists } from "@/lib/lastfm";
 import {
   buildSeenArtistSet,
+  isArtistAlreadySeen,
+  mergeArtistRecommendation,
   normalizeArtist,
-  rankRecommendations,
-  scoreNewArtistShow,
+  rankRecommendedArtists,
+  scoreRecommendedArtist,
 } from "@/lib/recommendations";
 import { createClient } from "@/lib/supabase/server";
-import {
-  fetchUpcomingForArtist,
-  fetchUpcomingInState,
-} from "@/lib/ticketmaster";
 import type { Concert } from "@/types/concert";
 
 function toFullConcert(
@@ -67,97 +62,56 @@ export async function GET() {
 
   if (rows.length === 0) {
     return NextResponse.json({
-      recommendations: [],
+      artists: [],
       preferences: [],
       needsConcerts: true,
-      apiConfigured: Boolean(process.env.TICKETMASTER_API_KEY),
     });
   }
 
-  const fullRows = rows.map(toFullConcert);
-  const preferences = buildArtistPreferences(fullRows);
-  const { states: preferredStates } = getFrequentRegions(fullRows);
+  const preferences = buildArtistPreferences(rows.map(toFullConcert));
   const seenArtistNorms = buildSeenArtistSet(preferences);
-
-  const tmKey = process.env.TICKETMASTER_API_KEY;
   const lastfmKey = process.env.LASTFM_API_KEY;
 
-  if (!tmKey) {
+  if (!lastfmKey) {
     return NextResponse.json({
-      recommendations: [],
+      artists: [],
       preferences: preferences.slice(0, 6),
-      needsApiKey: true,
-      apiConfigured: false,
+      needsLastFm: true,
     });
   }
 
-  const artistsToSearch = new Set<string>();
-  const similarArtistMap = new Map<
-    string,
-    { basedOn: string; avgFun: number }
-  >();
+  const byNorm = new Map<string, ReturnType<typeof scoreRecommendedArtist>>();
 
-  if (lastfmKey) {
-    const tasteAnchors = preferences
-      .filter((p) => p.avgFun >= 5)
-      .slice(0, 5);
+  const tasteAnchors = preferences.slice(0, 8);
 
-    for (const pref of tasteAnchors) {
-      const similar = await fetchSimilarArtists(pref.artist, lastfmKey, 8);
-      for (const name of similar) {
-        const norm = normalizeArtist(name);
-        if (seenArtistNorms.has(norm)) continue;
-        artistsToSearch.add(name);
-        if (!similarArtistMap.has(norm)) {
-          similarArtistMap.set(norm, {
-            basedOn: pref.artist,
-            avgFun: pref.avgFun,
-          });
-        }
-      }
-    }
-  }
+  for (const pref of tasteAnchors) {
+    const similar = await fetchSimilarArtists(pref.artist, lastfmKey, 10);
+    for (const name of similar) {
+      if (isArtistAlreadySeen(name, seenArtistNorms)) continue;
 
-  const seenEventIds = new Set<string>();
-  const scored: ReturnType<typeof scoreNewArtistShow>[] = [];
+      const norm = normalizeArtist(name);
+      const rec = scoreRecommendedArtist(name, {
+        basedOn: pref.artist,
+        avgFun: pref.avgFun,
+        showCount: pref.showCount,
+      });
 
-  function collect(shows: Awaited<ReturnType<typeof fetchUpcomingForArtist>>) {
-    for (const show of shows) {
-      if (seenEventIds.has(show.id)) continue;
-      seenEventIds.add(show.id);
-      const rec = scoreNewArtistShow(
-        show,
-        seenArtistNorms,
-        similarArtistMap,
-        preferredStates
+      const existing = byNorm.get(norm);
+      byNorm.set(
+        norm,
+        existing ? mergeArtistRecommendation(existing, rec) : rec
       );
-      if (rec) scored.push(rec);
     }
   }
 
-  for (const artist of artistsToSearch) {
-    collect(await fetchUpcomingForArtist(artist, tmKey));
-  }
-
-  for (const state of preferredStates.slice(0, 3)) {
-    collect(await fetchUpcomingInState(state, tmKey));
-  }
-
-  const recommendations = rankRecommendations(
-    scored.filter((s): s is NonNullable<typeof s> => s !== null)
-  ).slice(0, 24);
-
+  const artists = rankRecommendedArtists([...byNorm.values()]).slice(0, 20);
   const topPrefs = preferences.slice(0, 6);
 
   return NextResponse.json({
-    recommendations,
+    artists,
     preferences: topPrefs,
     needsConcerts: false,
-    needsApiKey: false,
-    apiConfigured: true,
-    similarArtistsEnabled: Boolean(lastfmKey),
-    newArtistsOnly: true,
-    needsLastFm:
-      !lastfmKey && recommendations.length === 0 && artistsToSearch.size === 0,
+    needsLastFm: false,
+    showsApiConfigured: Boolean(process.env.TICKETMASTER_API_KEY),
   });
 }

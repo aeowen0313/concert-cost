@@ -9,7 +9,7 @@ const NAV = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/add", label: "Add Concert" },
   { href: "/concerts", label: "My Concerts" },
-  { href: "/recommendations", label: "Predictions" },
+  { href: "/recommendations", label: "Artist Recommendations" },
 ];
 
 type AppShellProps = {

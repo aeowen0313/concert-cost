@@ -3,18 +3,23 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { ArtistPreference } from "@/lib/artist-preferences";
-import type { RecommendedShow } from "@/lib/recommendations";
+import type { RecommendedArtist } from "@/lib/recommendations";
+import type { UpcomingShow } from "@/lib/ticketmaster";
 import { EmptyState } from "@/components/EmptyState";
 
-type ApiResponse = {
-  recommendations: RecommendedShow[];
+type ArtistsResponse = {
+  artists: RecommendedArtist[];
   preferences: ArtistPreference[];
   needsConcerts?: boolean;
-  needsApiKey?: boolean;
-  apiConfigured?: boolean;
-  similarArtistsEnabled?: boolean;
-  newArtistsOnly?: boolean;
   needsLastFm?: boolean;
+  showsApiConfigured?: boolean;
+};
+
+type ShowsResponse = {
+  artist: string;
+  shows: UpcomingShow[];
+  needsApiKey?: boolean;
+  error?: string;
 };
 
 function formatShowDate(date: string, time?: string) {
@@ -35,20 +40,15 @@ function formatShowDate(date: string, time?: string) {
   return formatted;
 }
 
-const sourceBadge: Record<RecommendedShow["source"], string> = {
-  similar: "badge-secondary",
-  discovery: "badge-accent",
-};
-
-const sourceLabel: Record<RecommendedShow["source"], string> = {
-  similar: "New — similar taste",
-  discovery: "New — near you",
-};
-
 export function RecommendationsView() {
-  const [data, setData] = useState<ApiResponse | null>(null);
+  const [data, setData] = useState<ArtistsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [selectedArtist, setSelectedArtist] = useState<string | null>(null);
+  const [shows, setShows] = useState<UpcomingShow[]>([]);
+  const [showsLoading, setShowsLoading] = useState(false);
+  const [showsError, setShowsError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -68,11 +68,33 @@ export function RecommendationsView() {
     load();
   }, []);
 
+  async function loadShows(artistName: string) {
+    setSelectedArtist(artistName);
+    setShowsLoading(true);
+    setShowsError(null);
+    setShows([]);
+
+    try {
+      const res = await fetch(
+        `/api/recommendations/shows?artist=${encodeURIComponent(artistName)}`
+      );
+      const body = (await res.json()) as ShowsResponse;
+      if (!res.ok) {
+        throw new Error(body.error ?? "Could not load shows");
+      }
+      setShows(body.shows ?? []);
+    } catch (e) {
+      setShowsError(e instanceof Error ? e.message : "Could not load shows");
+    } finally {
+      setShowsLoading(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex flex-col items-center gap-4 py-16">
         <span className="loading loading-spinner loading-lg text-primary" />
-        <p className="text-sm opacity-70">Finding new artists you might like…</p>
+        <p className="text-sm opacity-70">Finding artists you might like…</p>
       </div>
     );
   }
@@ -87,24 +109,29 @@ export function RecommendationsView() {
 
   if (data?.needsConcerts) {
     return (
-      <EmptyState message="Log a few concerts first — we'll suggest new artists similar to shows you've enjoyed." />
+      <EmptyState message="Log a few concerts first — we'll suggest new artists based on who you've already seen." />
     );
   }
 
-  if (data?.needsApiKey) {
+  if (data?.needsLastFm) {
     return (
       <div className="space-y-6">
         <div className="alert alert-info">
           <div>
-            <p className="font-medium">Connect live concert data</p>
+            <p className="font-medium">Last.fm key needed for artist matching</p>
             <p className="text-sm mt-1">
-              Add a free Ticketmaster API key to see real upcoming shows. Until then,
-              here are the artists our model thinks you care about most:
+              We compare your logged artists to similar artists you haven&apos;t seen
+              yet. Location is not used — only your concert taste.
             </p>
           </div>
         </div>
-        <ArtistTasteList preferences={data.preferences} />
-        <SetupInstructions />
+        {data.preferences?.length > 0 ? (
+          <section>
+            <h2 className="text-lg font-semibold mb-2">Your taste profile</h2>
+            <ArtistTasteList preferences={data.preferences} />
+          </section>
+        ) : null}
+        <LastFmSetup />
       </div>
     );
   }
@@ -112,88 +139,136 @@ export function RecommendationsView() {
   if (!data) return null;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div className="alert alert-success alert-outline text-sm">
         <span>
-          Artists you <strong>haven&apos;t seen yet</strong>, picked from your taste
-          {data.similarArtistsEnabled
-            ? " and similar-artist suggestions"
-            : " and concerts in states you visit often"}
-          .
+          Artists you <strong>haven&apos;t seen yet</strong>, picked only from who
+          you&apos;ve gone to before — not from where you live. Tap an artist to see
+          where they&apos;re playing.
         </span>
       </div>
 
-      {data.needsLastFm ? (
-        <div className="alert alert-warning text-sm">
-          <span>
-            Add a free <strong>LASTFM_API_KEY</strong> for better new-artist matches
-            (optional setup below).
-          </span>
-        </div>
-      ) : null}
-
-      {data?.preferences && data.preferences.length > 0 ? (
+      {data.preferences?.length > 0 ? (
         <section>
-          <h2 className="text-lg font-semibold mb-3">Artists you already know</h2>
-          <p className="text-xs opacity-70 mb-2">
-            We use these for taste — they won&apos;t appear in the list below.
-          </p>
+          <h2 className="text-sm font-semibold mb-2 opacity-80">
+            Based on artists you&apos;ve seen
+          </h2>
           <ArtistTasteList preferences={data.preferences} compact />
         </section>
       ) : null}
 
-      {data?.recommendations.length === 0 ? (
-        <EmptyState message="No upcoming shows found for new artists right now. Add more concerts or try again later when tours are announced!" />
+      {data.artists.length === 0 ? (
+        <EmptyState message="No new artist matches right now. Log more concerts with artists you love, then check back." />
       ) : (
         <section>
           <h2 className="text-lg font-semibold mb-3">
-            New artists to check out ({data.recommendations.length})
+            Recommended artists ({data.artists.length})
           </h2>
-          <div className="grid gap-4 md:grid-cols-2">
-            {data.recommendations.map((show) => (
-              <article key={show.id} className="card bg-base-100 shadow-md">
-                <div className="card-body gap-2">
-                  <div className="flex flex-wrap justify-between gap-2 items-start">
-                    <h3 className="card-title text-base leading-tight">
-                      {show.artist}
-                    </h3>
-                    <span className={`badge badge-sm ${sourceBadge[show.source]}`}>
-                      {sourceLabel[show.source]}
+          <div className="grid gap-3 sm:grid-cols-2">
+            {data.artists.map((artist) => (
+              <button
+                key={artist.name}
+                type="button"
+                onClick={() => loadShows(artist.name)}
+                className={`card bg-base-100 shadow-md text-left transition hover:shadow-lg ${
+                  selectedArtist === artist.name ? "ring-2 ring-primary" : ""
+                }`}
+              >
+                <div className="card-body gap-2 p-4">
+                  <div className="flex justify-between items-start gap-2">
+                    <h3 className="font-semibold text-base">{artist.name}</h3>
+                    <span className="badge badge-primary badge-sm shrink-0">
+                      Match {artist.matchScore}
                     </span>
                   </div>
-                  <p className="text-sm font-medium">{show.eventName}</p>
-                  <p className="text-sm opacity-80">
-                    {show.venue}
-                    {show.city ? ` · ${show.city}` : ""}
-                    {show.state ? `, ${show.state}` : ""}
+                  <p className="text-xs opacity-75">
+                    Like {artist.basedOn} · tap for tour dates
                   </p>
-                  <p className="text-sm">{formatShowDate(show.date, show.time)}</p>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    <span className="badge badge-outline badge-sm">
-                      Match score: {show.matchScore}
-                    </span>
-                  </div>
-                  <ul className="text-xs opacity-75 list-disc list-inside mt-1 space-y-0.5">
-                    {show.matchReasons.map((r) => (
+                  <ul className="text-xs opacity-70 list-disc list-inside space-y-0.5">
+                    {artist.matchReasons.slice(0, 2).map((r) => (
                       <li key={r}>{r}</li>
                     ))}
                   </ul>
-                  <div className="card-actions justify-end mt-2">
-                    <a
-                      href={show.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn btn-primary btn-sm"
-                    >
-                      View tickets
-                    </a>
-                  </div>
                 </div>
-              </article>
+              </button>
             ))}
           </div>
         </section>
       )}
+
+      {selectedArtist ? (
+        <section className="card bg-base-100 shadow-lg border border-primary/20">
+          <div className="card-body gap-4">
+            <div className="flex flex-wrap justify-between items-center gap-2">
+              <h2 className="card-title text-lg">
+                Where {selectedArtist} is playing
+              </h2>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => {
+                  setSelectedArtist(null);
+                  setShows([]);
+                }}
+              >
+                Close
+              </button>
+            </div>
+
+            {showsLoading ? (
+              <div className="flex items-center gap-3 py-6 justify-center">
+                <span className="loading loading-spinner" />
+                <span className="text-sm opacity-70">Loading shows…</span>
+              </div>
+            ) : showsError ? (
+              <div className="alert alert-warning text-sm">
+                <span>{showsError}</span>
+              </div>
+            ) : shows.length === 0 ? (
+              <p className="text-sm opacity-70 py-4">
+                No upcoming US shows listed on Ticketmaster right now. Check again
+                later or search the web for tour dates.
+              </p>
+            ) : (
+              <ul className="space-y-3">
+                {shows.map((show) => (
+                  <li
+                    key={show.id}
+                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-3 rounded-lg bg-base-200"
+                  >
+                    <div>
+                      <p className="font-medium text-sm">{show.eventName}</p>
+                      <p className="text-sm opacity-80">
+                        {show.venue}
+                        {show.city ? ` · ${show.city}` : ""}
+                        {show.state ? `, ${show.state}` : ""}
+                      </p>
+                      <p className="text-xs opacity-70 mt-1">
+                        {formatShowDate(show.date, show.time)}
+                      </p>
+                    </div>
+                    <a
+                      href={show.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-primary btn-sm w-full sm:w-auto"
+                    >
+                      Tickets
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {!data.showsApiConfigured ? (
+        <p className="text-xs opacity-60">
+          Add <code className="bg-base-200 px-1 rounded">TICKETMASTER_API_KEY</code>{" "}
+          to load show locations when you tap an artist.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -211,7 +286,7 @@ function ArtistTasteList({
         <span key={p.artist} className="badge badge-lg badge-outline gap-1">
           {p.artist}
           <span className="opacity-60 text-xs">
-            · {p.showCount} show{p.showCount > 1 ? "s" : ""} · {p.avgFun}/10 fun
+            · {p.showCount} show{p.showCount > 1 ? "s" : ""} · {p.avgFun}/10
           </span>
         </span>
       ))}
@@ -219,43 +294,39 @@ function ArtistTasteList({
   );
 }
 
-function SetupInstructions() {
+function LastFmSetup() {
   return (
     <div className="card bg-base-100 shadow">
       <div className="card-body text-sm gap-2">
-        <h3 className="font-semibold">Enable predictions (free)</h3>
+        <h3 className="font-semibold">Setup (free)</h3>
         <ol className="list-decimal list-inside space-y-1 opacity-90">
           <li>
-            Sign up at{" "}
-            <a
-              className="link link-primary"
-              href="https://developer.ticketmaster.com/"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              developer.ticketmaster.com
-            </a>{" "}
-            and create an API key.
-          </li>
-          <li>
-            Add to <code className="text-xs bg-base-200 px-1 rounded">.env.local</code>{" "}
-            and Vercel env vars:{" "}
-            <code className="text-xs bg-base-200 px-1 rounded">TICKETMASTER_API_KEY=your_key</code>
-          </li>
-          <li>
-            Optional: add{" "}
-            <code className="text-xs bg-base-200 px-1 rounded">LASTFM_API_KEY</code> from{" "}
+            Create a key at{" "}
             <a
               className="link link-primary"
               href="https://www.last.fm/api/account/create"
               target="_blank"
               rel="noopener noreferrer"
             >
-              last.fm
-            </a>{" "}
-            for similar-artist suggestions.
+              last.fm/api
+            </a>
           </li>
-          <li>Restart dev server or redeploy on Vercel.</li>
+          <li>
+            Add{" "}
+            <code className="text-xs bg-base-200 px-1 rounded">
+              LASTFM_API_KEY=your_key
+            </code>{" "}
+            to <code className="text-xs bg-base-200 px-1 rounded">.env.local</code>{" "}
+            and Vercel
+          </li>
+          <li>
+            Optional:{" "}
+            <code className="text-xs bg-base-200 px-1 rounded">
+              TICKETMASTER_API_KEY
+            </code>{" "}
+            to show venues when you tap an artist
+          </li>
+          <li>Restart dev server or redeploy</li>
         </ol>
         <Link href="/add" className="btn btn-outline btn-sm w-fit mt-2">
           Add more concerts
