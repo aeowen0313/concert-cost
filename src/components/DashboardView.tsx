@@ -17,6 +17,8 @@ import type { Concert } from "@/types/concert";
 import {
   COST_FIELDS,
   formatCurrency,
+  formatDate,
+  getBestNightHighlights,
   getCostPerHour,
   getFunPointsPer100,
   getTotalCost,
@@ -83,6 +85,8 @@ export function DashboardView({ concerts }: DashboardViewProps) {
     value: concerts.reduce((s, c) => s + Number(c[key] ?? 0), 0),
   })).filter((c) => c.value > 0);
 
+  const bestNight = getBestNightHighlights(concerts);
+
   const byConcert = totals.map((t) => ({
     name:
       t.concert.concert_name.length > 18
@@ -96,6 +100,8 @@ export function DashboardView({ concerts }: DashboardViewProps) {
 
   return (
     <div className="space-y-8">
+      {bestNight ? <BestNightBanner highlights={bestNight} /> : null}
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard label="Total concerts" value={String(concerts.length)} />
         <StatCard label="Total spent" value={formatCurrency(totalSpent)} />
@@ -186,6 +192,59 @@ export function DashboardView({ concerts }: DashboardViewProps) {
   );
 }
 
+function BestNightBanner({
+  highlights,
+}: {
+  highlights: NonNullable<ReturnType<typeof getBestNightHighlights>>;
+}) {
+  const { bestNightEver, highestFun, bestValue, reason } = highlights;
+  const total = getTotalCost(bestNightEver);
+  const funPer100 = getFunPointsPer100(bestNightEver);
+  const sameShow = highestFun.concert.id === bestValue.concert.id;
+
+  return (
+    <div className="card bg-gradient-to-br from-primary/25 via-secondary/15 to-accent/20 shadow-lg border border-primary/30">
+      <div className="card-body gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="badge badge-primary badge-lg gap-1">Best night ever</span>
+          {reason === "both" ? (
+            <span className="badge badge-secondary badge-sm">Top fun &amp; best value</span>
+          ) : (
+            <span className="badge badge-secondary badge-sm">Highest fun rating</span>
+          )}
+        </div>
+
+        <div>
+          <h2 className="text-xl font-bold">{bestNightEver.concert_name}</h2>
+          <p className="text-sm opacity-80">
+            {bestNightEver.artist} · {bestNightEver.venue} · {formatDate(bestNightEver.concert_date)}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2 text-sm">
+          <span className="badge badge-outline">
+            Fun {highestFun.funRating}/10
+          </span>
+          <span className="badge badge-outline">
+            {formatCurrency(total)} total
+          </span>
+          <span className="badge badge-outline">
+            {funPer100.toFixed(2)} Fun Points per $100
+          </span>
+        </div>
+
+        {!sameShow ? (
+          <p className="text-sm opacity-80 border-t border-primary/20 pt-2">
+            <span className="font-medium">Best bang for your buck:</span>{" "}
+            {bestValue.concert.concert_name} ({bestValue.funPer100.toFixed(2)} Fun Points per
+            $100)
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="card bg-base-100 shadow">
@@ -196,3 +255,4 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
     </div>
   );
 }
+

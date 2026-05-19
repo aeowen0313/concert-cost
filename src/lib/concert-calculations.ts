@@ -48,6 +48,41 @@ export function formatDate(dateStr: string): string {
   });
 }
 
+export type BestNightHighlights = {
+  highestFun: { concert: Concert; funRating: number };
+  bestValue: { concert: Concert; funPer100: number };
+  /** Same concert wins both, or highest fun when they differ */
+  bestNightEver: Concert;
+  reason: "both" | "fun" | "value";
+};
+
+export function getBestNightHighlights(concerts: Concert[]): BestNightHighlights | null {
+  if (concerts.length === 0) return null;
+
+  let highestFun = concerts[0];
+  let bestValue = concerts[0];
+  let bestFunPer100 = getFunPointsPer100(concerts[0]);
+
+  for (const c of concerts.slice(1)) {
+    if (c.fun_rating > highestFun.fun_rating) highestFun = c;
+    const fp100 = getFunPointsPer100(c);
+    if (fp100 > bestFunPer100) {
+      bestValue = c;
+      bestFunPer100 = fp100;
+    }
+  }
+
+  const funPer100Highest = getFunPointsPer100(highestFun);
+  const sameConcert = highestFun.id === bestValue.id;
+
+  return {
+    highestFun: { concert: highestFun, funRating: highestFun.fun_rating },
+    bestValue: { concert: bestValue, funPer100: bestFunPer100 },
+    bestNightEver: sameConcert ? highestFun : highestFun,
+    reason: sameConcert ? "both" : "fun",
+  };
+}
+
 export function getTopCostCategories(
   concert: Pick<Concert, (typeof COST_FIELDS)[number]["key"]>,
   limit = 3
