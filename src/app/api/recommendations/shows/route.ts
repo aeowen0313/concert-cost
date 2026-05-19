@@ -12,7 +12,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const artist = new URL(request.url).searchParams.get("artist")?.trim();
+  const { searchParams } = new URL(request.url);
+  const artist = searchParams.get("artist")?.trim();
+  const attractionId = searchParams.get("attractionId")?.trim() || undefined;
+
   if (!artist) {
     return NextResponse.json({ error: "Artist name required" }, { status: 400 });
   }
@@ -25,7 +28,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const shows = await fetchUpcomingForArtist(artist, tmKey);
+  const shows = await fetchUpcomingForArtist(artist, tmKey, attractionId);
 
   return NextResponse.json({
     artist,

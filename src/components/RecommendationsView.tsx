@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { ArtistPreference } from "@/lib/artist-preferences";
 import type { RecommendedArtist } from "@/lib/recommendations";
@@ -12,13 +12,11 @@ type ArtistsResponse = {
   preferences: ArtistPreference[];
   needsConcerts?: boolean;
   needsApiKey?: boolean;
-  showsApiConfigured?: boolean;
 };
 
 type ShowsResponse = {
   artist: string;
   shows: UpcomingShow[];
-  needsApiKey?: boolean;
   error?: string;
 };
 
@@ -40,15 +38,109 @@ function formatShowDate(date: string, time?: string) {
   return formatted;
 }
 
+function ArtistShowsPanel({
+  artist,
+  attractionId,
+}: {
+  artist: RecommendedArtist;
+  attractionId?: string;
+}) {
+  const [shows, setShows] = useState<UpcomingShow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams({ artist: artist.name });
+        if (attractionId) params.set("attractionId", attractionId);
+
+        const res = await fetch(`/api/recommendations/shows?${params}`);
+        const body = (await res.json()) as ShowsResponse;
+        if (!res.ok) {
+          throw new Error(body.error ?? "Could not load shows");
+        }
+        if (!cancelled) setShows(body.shows ?? []);
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : "Could not load shows");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [artist.name, attractionId]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 py-4 px-2 border-t border-base-300">
+        <span className="loading loading-spinner loading-sm" />
+        <span className="text-sm opacity-70">Loading tour dates…</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="alert alert-warning text-sm m-2">
+        <span>{error}</span>
+      </div>
+    );
+  }
+
+  if (shows.length === 0) {
+    return (
+      <p className="text-sm opacity-70 py-3 px-2 border-t border-base-300">
+        No upcoming US shows on Ticketmaster right now. Try again later or search
+        online for &ldquo;{artist.name} tour dates&rdquo;.
+      </p>
+    );
+  }
+
+  return (
+    <ul className="border-t border-base-300 divide-y divide-base-300">
+      {shows.map((show) => (
+        <li key={show.id} className="p-3 flex flex-col sm:flex-row sm:items-center gap-2">
+          <div className="flex-1 min-w-0">
+            <p className="font-medium text-sm">{show.eventName}</p>
+            <p className="text-sm opacity-80">
+              {show.venue}
+              {show.city ? ` · ${show.city}` : ""}
+              {show.state ? `, ${show.state}` : ""}
+            </p>
+            <p className="text-xs opacity-70 mt-0.5">
+              {formatShowDate(show.date, show.time)}
+            </p>
+          </div>
+          <a
+            href={show.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-primary btn-sm shrink-0"
+          >
+            Tickets
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function RecommendationsView() {
   const [data, setData] = useState<ArtistsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const [selectedArtist, setSelectedArtist] = useState<string | null>(null);
-  const [shows, setShows] = useState<UpcomingShow[]>([]);
-  const [showsLoading, setShowsLoading] = useState(false);
-  const [showsError, setShowsError] = useState<string | null>(null);
+  const [expandedArtist, setExpandedArtist] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     async function load() {
@@ -68,25 +160,16 @@ export function RecommendationsView() {
     load();
   }, []);
 
-  async function loadShows(artistName: string) {
-    setSelectedArtist(artistName);
-    setShowsLoading(true);
-    setShowsError(null);
-    setShows([]);
-
-    try {
-      const res = await fetch(
-        `/api/recommendations/shows?artist=${encodeURIComponent(artistName)}`
-      );
-      const body = (await res.json()) as ShowsResponse;
-      if (!res.ok) {
-        throw new Error(body.error ?? "Could not load shows");
-      }
-      setShows(body.shows ?? []);
-    } catch (e) {
-      setShowsError(e instanceof Error ? e.message : "Could not load shows");
-    } finally {
-      setShowsLoading(false);
+  function toggleArtist(artist: RecommendedArtist) {
+    const next = expandedArtist === artist.name ? null : artist.name;
+    setExpandedArtist(next);
+    if (next) {
+      requestAnimationFrame(() => {
+        document.getElementById(`artist-${normalizeId(artist.name)}`)?.scrollIntoView({
+          behavior: "smooth",
+          block: "nearest",
+        });
+      });
     }
   }
 
@@ -120,8 +203,8 @@ export function RecommendationsView() {
           <div>
             <p className="font-medium">Ticketmaster key needed</p>
             <p className="text-sm mt-1">
-              We use Ticketmaster to find artists in the same music style as concerts
-              you&apos;ve logged. No Last.fm account required.
+              We use Ticketmaster for artist matching and tour dates. No Last.fm
+              account required.
             </p>
           </div>
         </div>
@@ -139,12 +222,12 @@ export function RecommendationsView() {
   if (!data) return null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" ref={listRef}>
       <div className="alert alert-success alert-outline text-sm">
         <span>
-          Artists you <strong>haven&apos;t seen yet</strong>, matched by Ticketmaster
-          music style (same genre as shows you loved). Tap an artist to see where
-          they&apos;re playing.
+          Tap <strong>See tour dates</strong> on any artist to expand shows below
+          that card. Matches are based on music style from concerts you&apos;ve
+          logged — not your location.
         </span>
       </div>
 
@@ -165,106 +248,56 @@ export function RecommendationsView() {
             Recommended artists ({data.artists.length})
           </h2>
           <div className="grid gap-3 sm:grid-cols-2">
-            {data.artists.map((artist) => (
-              <button
-                key={artist.name}
-                type="button"
-                onClick={() => loadShows(artist.name)}
-                className={`card bg-base-100 shadow-md text-left transition hover:shadow-lg ${
-                  selectedArtist === artist.name ? "ring-2 ring-primary" : ""
-                }`}
-              >
-                <div className="card-body gap-2 p-4">
-                  <div className="flex justify-between items-start gap-2">
-                    <h3 className="font-semibold text-base">{artist.name}</h3>
-                    <span className="badge badge-primary badge-sm shrink-0">
-                      Match {artist.matchScore}
-                    </span>
+            {data.artists.map((artist) => {
+              const isOpen = expandedArtist === artist.name;
+              return (
+                <div
+                  key={artist.name}
+                  id={`artist-${normalizeId(artist.name)}`}
+                  className={`card bg-base-100 shadow-md overflow-hidden ${
+                    isOpen ? "ring-2 ring-primary" : ""
+                  }`}
+                >
+                  <div className="card-body gap-2 p-4">
+                    <div className="flex justify-between items-start gap-2">
+                      <h3 className="font-semibold text-base">{artist.name}</h3>
+                      <span className="badge badge-primary badge-sm shrink-0">
+                        Match {artist.matchScore}
+                      </span>
+                    </div>
+                    <p className="text-xs opacity-75">Like {artist.basedOn}</p>
+                    <ul className="text-xs opacity-70 list-disc list-inside space-y-0.5">
+                      {artist.matchReasons.slice(0, 2).map((r) => (
+                        <li key={r}>{r}</li>
+                      ))}
+                    </ul>
+                    <button
+                      type="button"
+                      className={`btn btn-sm w-full mt-2 ${isOpen ? "btn-primary" : "btn-outline btn-primary"}`}
+                      onClick={() => toggleArtist(artist)}
+                      aria-expanded={isOpen}
+                    >
+                      {isOpen ? "Hide tour dates" : "See tour dates"}
+                    </button>
                   </div>
-                  <p className="text-xs opacity-75">
-                    Like {artist.basedOn} · tap for tour dates
-                  </p>
-                  <ul className="text-xs opacity-70 list-disc list-inside space-y-0.5">
-                    {artist.matchReasons.slice(0, 2).map((r) => (
-                      <li key={r}>{r}</li>
-                    ))}
-                  </ul>
+                  {isOpen ? (
+                    <ArtistShowsPanel
+                      artist={artist}
+                      attractionId={artist.attractionId}
+                    />
+                  ) : null}
                 </div>
-              </button>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}
-
-      {selectedArtist ? (
-        <section className="card bg-base-100 shadow-lg border border-primary/20">
-          <div className="card-body gap-4">
-            <div className="flex flex-wrap justify-between items-center gap-2">
-              <h2 className="card-title text-lg">
-                Where {selectedArtist} is playing
-              </h2>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={() => {
-                  setSelectedArtist(null);
-                  setShows([]);
-                }}
-              >
-                Close
-              </button>
-            </div>
-
-            {showsLoading ? (
-              <div className="flex items-center gap-3 py-6 justify-center">
-                <span className="loading loading-spinner" />
-                <span className="text-sm opacity-70">Loading shows…</span>
-              </div>
-            ) : showsError ? (
-              <div className="alert alert-warning text-sm">
-                <span>{showsError}</span>
-              </div>
-            ) : shows.length === 0 ? (
-              <p className="text-sm opacity-70 py-4">
-                No upcoming US shows listed on Ticketmaster right now. Check again
-                later or search the web for tour dates.
-              </p>
-            ) : (
-              <ul className="space-y-3">
-                {shows.map((show) => (
-                  <li
-                    key={show.id}
-                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-3 rounded-lg bg-base-200"
-                  >
-                    <div>
-                      <p className="font-medium text-sm">{show.eventName}</p>
-                      <p className="text-sm opacity-80">
-                        {show.venue}
-                        {show.city ? ` · ${show.city}` : ""}
-                        {show.state ? `, ${show.state}` : ""}
-                      </p>
-                      <p className="text-xs opacity-70 mt-1">
-                        {formatShowDate(show.date, show.time)}
-                      </p>
-                    </div>
-                    <a
-                      href={show.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn btn-primary btn-sm w-full sm:w-auto"
-                    >
-                      Tickets
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </section>
-      ) : null}
-
     </div>
   );
+}
+
+function normalizeId(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
 
 function ArtistTasteList({

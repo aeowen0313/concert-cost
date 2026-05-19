@@ -15,7 +15,7 @@ type TmClassification = {
 
 type TmEventRaw = {
   _embedded?: {
-    attractions?: Array<{ name?: string }>;
+    attractions?: Array<{ name?: string; id?: string }>;
     venues?: unknown[];
   };
   classifications?: TmClassification[];
@@ -98,14 +98,26 @@ async function fetchEventsForGenre(taste: GenreTaste, apiKey: string): Promise<T
   return data?._embedded?.events ?? [];
 }
 
-function artistsOnEvents(events: TmEventRaw[]): string[] {
-  const names: string[] = [];
+function artistsOnEvents(
+  events: TmEventRaw[]
+): Array<{ name: string; attractionId?: string }> {
+  const byNorm = new Map<string, { name: string; attractionId?: string }>();
+
   for (const ev of events) {
     for (const a of ev._embedded?.attractions ?? []) {
-      if (a.name?.trim()) names.push(a.name.trim());
+      const name = a.name?.trim();
+      if (!name) continue;
+      const norm = normalizeArtist(name);
+      const existing = byNorm.get(norm);
+      if (!existing) {
+        byNorm.set(norm, { name, attractionId: a.id });
+      } else if (!existing.attractionId && a.id) {
+        byNorm.set(norm, { name, attractionId: a.id });
+      }
     }
   }
-  return names;
+
+  return [...byNorm.values()];
 }
 
 /** Discover new artists via Ticketmaster genres from concerts you've logged */
@@ -131,19 +143,30 @@ export async function discoverArtistsViaTicketmaster(
     const events = await fetchEventsForGenre(taste, apiKey);
     const candidates = artistsOnEvents(events);
 
-    for (const name of candidates) {
-      if (isArtistAlreadySeen(name, seenArtistNorms)) continue;
+    for (const candidate of candidates) {
+      if (isArtistAlreadySeen(candidate.name, seenArtistNorms)) continue;
 
-      const norm = normalizeArtist(name);
-      const rec = scoreRecommendedArtist(name, {
-        basedOn: taste.basedOn.artist,
-        avgFun: taste.basedOn.avgFun,
-        showCount: taste.basedOn.showCount,
-        genreName: taste.subGenreName ?? taste.genreName,
-      });
+      const norm = normalizeArtist(candidate.name);
+      const rec: RecommendedArtist = {
+        ...scoreRecommendedArtist(candidate.name, {
+          basedOn: taste.basedOn.artist,
+          avgFun: taste.basedOn.avgFun,
+          showCount: taste.basedOn.showCount,
+          genreName: taste.subGenreName ?? taste.genreName,
+        }),
+        attractionId: candidate.attractionId,
+      };
 
       const existing = byNorm.get(norm);
-      byNorm.set(norm, existing ? mergeArtistRecommendation(existing, rec) : rec);
+      if (existing) {
+        const merged = mergeArtistRecommendation(existing, rec);
+        byNorm.set(norm, {
+          ...merged,
+          attractionId: merged.attractionId ?? rec.attractionId,
+        });
+      } else {
+        byNorm.set(norm, rec);
+      }
     }
   }
 

@@ -12,6 +12,8 @@ export type RecommendedArtist = {
   matchScore: number;
   matchReasons: string[];
   basedOn: string;
+  /** Ticketmaster attraction ID for reliable show lookup */
+  attractionId?: string;
 };
 
 export function normalizeArtist(name: string): string {

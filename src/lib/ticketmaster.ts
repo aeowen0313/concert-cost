@@ -1,3 +1,5 @@
+import { normalizeArtist } from "@/lib/recommendations";
+
 export type UpcomingShow = {
   id: string;
   eventName: string;
@@ -21,22 +23,29 @@ type TmEvent = {
       city?: { name?: string };
       state?: { stateCode?: string };
     }>;
-    attractions?: Array<{ name?: string }>;
+    attractions?: Array<{ name?: string; id?: string }>;
   };
 };
 
-function parseEvents(events: TmEvent[], fallbackArtist = ""): UpcomingShow[] {
+function parseEvents(
+  events: TmEvent[],
+  searchArtist: string
+): UpcomingShow[] {
   const today = new Date().toISOString().slice(0, 10);
+  const searchNorm = normalizeArtist(searchArtist);
 
   return events
     .map((ev) => {
       const venue = ev._embedded?.venues?.[0];
-      const attraction = ev._embedded?.attractions?.[0];
+      const attractions = ev._embedded?.attractions ?? [];
+      const match =
+        attractions.find((a) => normalizeArtist(a.name ?? "") === searchNorm) ??
+        attractions[0];
       const date = ev.dates?.start?.localDate ?? "";
       return {
         id: ev.id,
         eventName: ev.name,
-        artist: attraction?.name ?? fallbackArtist,
+        artist: match?.name ?? searchArtist,
         venue: venue?.name ?? "Venue TBA",
         city: venue?.city?.name ?? "",
         state: venue?.state?.stateCode ?? "",
@@ -51,7 +60,7 @@ function parseEvents(events: TmEvent[], fallbackArtist = ""): UpcomingShow[] {
 async function fetchEvents(
   params: Record<string, string>,
   apiKey: string,
-  fallbackArtist = ""
+  searchArtist: string
 ): Promise<UpcomingShow[]> {
   const search = new URLSearchParams({
     apikey: apiKey,
@@ -69,20 +78,52 @@ async function fetchEvents(
   if (!res.ok) return [];
 
   const data = (await res.json()) as { _embedded?: { events?: TmEvent[] } };
-  return parseEvents(data._embedded?.events ?? [], fallbackArtist);
+  return parseEvents(data._embedded?.events ?? [], searchArtist);
+}
+
+async function resolveAttractionId(
+  artist: string,
+  apiKey: string
+): Promise<string | undefined> {
+  const search = new URLSearchParams({
+    apikey: apiKey,
+    keyword: artist,
+    classificationName: "music",
+    size: "5",
+  });
+
+  const res = await fetch(
+    `https://app.ticketmaster.com/discovery/v2/attractions.json?${search}`,
+    { next: { revalidate: 3600 } }
+  );
+
+  if (!res.ok) return undefined;
+
+  const data = (await res.json()) as {
+    _embedded?: { attractions?: Array<{ id?: string; name?: string }> };
+  };
+
+  const target = normalizeArtist(artist);
+  const attractions = data._embedded?.attractions ?? [];
+  const exact = attractions.find((a) => normalizeArtist(a.name ?? "") === target);
+  return exact?.id ?? attractions[0]?.id;
 }
 
 export async function fetchUpcomingForArtist(
   artist: string,
-  apiKey: string
+  apiKey: string,
+  attractionId?: string
 ): Promise<UpcomingShow[]> {
-  return fetchEvents({ keyword: artist, size: "8" }, apiKey, artist);
-}
+  const id = attractionId ?? (await resolveAttractionId(artist, apiKey));
 
-/** Music events in a US state — used to discover artists you have not logged yet */
-export async function fetchUpcomingInState(
-  stateCode: string,
-  apiKey: string
-): Promise<UpcomingShow[]> {
-  return fetchEvents({ stateCode, size: "15" }, apiKey);
+  if (id) {
+    const byAttraction = await fetchEvents(
+      { attractionId: id, size: "20" },
+      apiKey,
+      artist
+    );
+    if (byAttraction.length > 0) return byAttraction;
+  }
+
+  return fetchEvents({ keyword: artist, size: "20" }, apiKey, artist);
 }
