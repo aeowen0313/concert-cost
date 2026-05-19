@@ -4,13 +4,41 @@ import {
   getFrequentRegions,
 } from "@/lib/artist-preferences";
 import { fetchSimilarArtists } from "@/lib/lastfm";
-import { rankRecommendations, scoreUpcomingShow } from "@/lib/recommendations";
+import {
+  buildSeenArtistSet,
+  normalizeArtist,
+  rankRecommendations,
+  scoreNewArtistShow,
+} from "@/lib/recommendations";
 import { createClient } from "@/lib/supabase/server";
-import { fetchUpcomingForArtist } from "@/lib/ticketmaster";
+import {
+  fetchUpcomingForArtist,
+  fetchUpcomingInState,
+} from "@/lib/ticketmaster";
 import type { Concert } from "@/types/concert";
 
-function normalizeArtist(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+function toFullConcert(
+  r: Pick<Concert, "artist" | "state" | "city" | "fun_rating" | "concert_date">
+): Concert {
+  return {
+    ...r,
+    id: "",
+    user_id: "",
+    concert_name: "",
+    venue: "",
+    distance_from_home: 0,
+    hours_at_event: 1,
+    ticket_cost: 0,
+    ticket_fees: 0,
+    parking_cost: 0,
+    food_drink_cost: 0,
+    merchandise_cost: 0,
+    lodging_cost: 0,
+    travel_cost: 0,
+    other_cost: 0,
+    notes: null,
+    created_at: "",
+  };
 }
 
 export async function GET() {
@@ -46,50 +74,10 @@ export async function GET() {
     });
   }
 
-  const preferences = buildArtistPreferences(
-    rows.map((r) => ({
-      ...r,
-      id: "",
-      user_id: "",
-      concert_name: "",
-      venue: "",
-      distance_from_home: 0,
-      hours_at_event: 1,
-      ticket_cost: 0,
-      ticket_fees: 0,
-      parking_cost: 0,
-      food_drink_cost: 0,
-      merchandise_cost: 0,
-      lodging_cost: 0,
-      travel_cost: 0,
-      other_cost: 0,
-      notes: null,
-      created_at: "",
-    }))
-  );
-
-  const { states: preferredStates } = getFrequentRegions(
-    rows.map((r) => ({
-      ...r,
-      id: "",
-      user_id: "",
-      concert_name: "",
-      artist: r.artist,
-      venue: "",
-      distance_from_home: 0,
-      hours_at_event: 1,
-      ticket_cost: 0,
-      ticket_fees: 0,
-      parking_cost: 0,
-      food_drink_cost: 0,
-      merchandise_cost: 0,
-      lodging_cost: 0,
-      travel_cost: 0,
-      other_cost: 0,
-      notes: null,
-      created_at: "",
-    }))
-  );
+  const fullRows = rows.map(toFullConcert);
+  const preferences = buildArtistPreferences(fullRows);
+  const { states: preferredStates } = getFrequentRegions(fullRows);
+  const seenArtistNorms = buildSeenArtistSet(preferences);
 
   const tmKey = process.env.TICKETMASTER_API_KEY;
   const lastfmKey = process.env.LASTFM_API_KEY;
@@ -104,42 +92,62 @@ export async function GET() {
   }
 
   const artistsToSearch = new Set<string>();
-  const topPrefs = preferences.slice(0, 6);
-  for (const p of topPrefs) artistsToSearch.add(p.artist);
+  const similarArtistMap = new Map<
+    string,
+    { basedOn: string; avgFun: number }
+  >();
 
-  const similarArtistSet = new Set<string>();
   if (lastfmKey) {
-    const highRated = preferences.filter((p) => p.avgFun >= 7).slice(0, 2);
-    for (const p of highRated) {
-      const similar = await fetchSimilarArtists(p.artist, lastfmKey, 4);
+    const tasteAnchors = preferences
+      .filter((p) => p.avgFun >= 5)
+      .slice(0, 5);
+
+    for (const pref of tasteAnchors) {
+      const similar = await fetchSimilarArtists(pref.artist, lastfmKey, 8);
       for (const name of similar) {
+        const norm = normalizeArtist(name);
+        if (seenArtistNorms.has(norm)) continue;
         artistsToSearch.add(name);
-        similarArtistSet.add(normalizeArtist(name));
+        if (!similarArtistMap.has(norm)) {
+          similarArtistMap.set(norm, {
+            basedOn: pref.artist,
+            avgFun: pref.avgFun,
+          });
+        }
       }
     }
   }
 
   const seenEventIds = new Set<string>();
-  const scored: ReturnType<typeof scoreUpcomingShow>[] = [];
+  const scored: ReturnType<typeof scoreNewArtistShow>[] = [];
 
-  for (const artist of artistsToSearch) {
-    const upcoming = await fetchUpcomingForArtist(artist, tmKey);
-    for (const show of upcoming) {
+  function collect(shows: Awaited<ReturnType<typeof fetchUpcomingForArtist>>) {
+    for (const show of shows) {
       if (seenEventIds.has(show.id)) continue;
       seenEventIds.add(show.id);
-      const rec = scoreUpcomingShow(
+      const rec = scoreNewArtistShow(
         show,
-        preferences,
-        preferredStates,
-        similarArtistSet
+        seenArtistNorms,
+        similarArtistMap,
+        preferredStates
       );
       if (rec) scored.push(rec);
     }
   }
 
+  for (const artist of artistsToSearch) {
+    collect(await fetchUpcomingForArtist(artist, tmKey));
+  }
+
+  for (const state of preferredStates.slice(0, 3)) {
+    collect(await fetchUpcomingInState(state, tmKey));
+  }
+
   const recommendations = rankRecommendations(
     scored.filter((s): s is NonNullable<typeof s> => s !== null)
   ).slice(0, 24);
+
+  const topPrefs = preferences.slice(0, 6);
 
   return NextResponse.json({
     recommendations,
@@ -148,5 +156,8 @@ export async function GET() {
     needsApiKey: false,
     apiConfigured: true,
     similarArtistsEnabled: Boolean(lastfmKey),
+    newArtistsOnly: true,
+    needsLastFm:
+      !lastfmKey && recommendations.length === 0 && artistsToSearch.size === 0,
   });
 }

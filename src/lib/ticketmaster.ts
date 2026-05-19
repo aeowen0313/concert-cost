@@ -25,31 +25,7 @@ type TmEvent = {
   };
 };
 
-export async function fetchUpcomingForArtist(
-  artist: string,
-  apiKey: string
-): Promise<UpcomingShow[]> {
-  const params = new URLSearchParams({
-    apikey: apiKey,
-    keyword: artist,
-    countryCode: "US",
-    sort: "date,asc",
-    size: "8",
-    classificationName: "music",
-  });
-
-  const res = await fetch(
-    `https://app.ticketmaster.com/discovery/v2/events.json?${params}`,
-    { next: { revalidate: 3600 } }
-  );
-
-  if (!res.ok) return [];
-
-  const data = (await res.json()) as {
-    _embedded?: { events?: TmEvent[] };
-  };
-
-  const events = data._embedded?.events ?? [];
+function parseEvents(events: TmEvent[], fallbackArtist = ""): UpcomingShow[] {
   const today = new Date().toISOString().slice(0, 10);
 
   return events
@@ -60,7 +36,7 @@ export async function fetchUpcomingForArtist(
       return {
         id: ev.id,
         eventName: ev.name,
-        artist: attraction?.name ?? artist,
+        artist: attraction?.name ?? fallbackArtist,
         venue: venue?.name ?? "Venue TBA",
         city: venue?.city?.name ?? "",
         state: venue?.state?.stateCode ?? "",
@@ -69,5 +45,44 @@ export async function fetchUpcomingForArtist(
         url: ev.url,
       };
     })
-    .filter((ev) => ev.date >= today);
+    .filter((ev) => ev.date >= today && ev.artist.trim().length > 0);
+}
+
+async function fetchEvents(
+  params: Record<string, string>,
+  apiKey: string,
+  fallbackArtist = ""
+): Promise<UpcomingShow[]> {
+  const search = new URLSearchParams({
+    apikey: apiKey,
+    countryCode: "US",
+    sort: "date,asc",
+    classificationName: "music",
+    ...params,
+  });
+
+  const res = await fetch(
+    `https://app.ticketmaster.com/discovery/v2/events.json?${search}`,
+    { next: { revalidate: 3600 } }
+  );
+
+  if (!res.ok) return [];
+
+  const data = (await res.json()) as { _embedded?: { events?: TmEvent[] } };
+  return parseEvents(data._embedded?.events ?? [], fallbackArtist);
+}
+
+export async function fetchUpcomingForArtist(
+  artist: string,
+  apiKey: string
+): Promise<UpcomingShow[]> {
+  return fetchEvents({ keyword: artist, size: "8" }, apiKey, artist);
+}
+
+/** Music events in a US state — used to discover artists you have not logged yet */
+export async function fetchUpcomingInState(
+  stateCode: string,
+  apiKey: string
+): Promise<UpcomingShow[]> {
+  return fetchEvents({ stateCode, size: "15" }, apiKey);
 }

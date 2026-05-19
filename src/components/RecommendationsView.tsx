@@ -13,6 +13,8 @@ type ApiResponse = {
   needsApiKey?: boolean;
   apiConfigured?: boolean;
   similarArtistsEnabled?: boolean;
+  newArtistsOnly?: boolean;
+  needsLastFm?: boolean;
 };
 
 function formatShowDate(date: string, time?: string) {
@@ -34,15 +36,13 @@ function formatShowDate(date: string, time?: string) {
 }
 
 const sourceBadge: Record<RecommendedShow["source"], string> = {
-  repeat: "badge-primary",
   similar: "badge-secondary",
-  region: "badge-accent",
+  discovery: "badge-accent",
 };
 
 const sourceLabel: Record<RecommendedShow["source"], string> = {
-  repeat: "Artist you've seen",
-  similar: "Similar taste",
-  region: "Your region",
+  similar: "New — similar taste",
+  discovery: "New — near you",
 };
 
 export function RecommendationsView() {
@@ -72,7 +72,7 @@ export function RecommendationsView() {
     return (
       <div className="flex flex-col items-center gap-4 py-16">
         <span className="loading loading-spinner loading-lg text-primary" />
-        <p className="text-sm opacity-70">Finding shows you might like…</p>
+        <p className="text-sm opacity-70">Finding new artists you might like…</p>
       </div>
     );
   }
@@ -87,7 +87,7 @@ export function RecommendationsView() {
 
   if (data?.needsConcerts) {
     return (
-      <EmptyState message="Log a few concerts first — we'll use the artists you've seen to predict shows you'd enjoy." />
+      <EmptyState message="Log a few concerts first — we'll suggest new artists similar to shows you've enjoyed." />
     );
   }
 
@@ -115,25 +115,39 @@ export function RecommendationsView() {
     <div className="space-y-8">
       <div className="alert alert-success alert-outline text-sm">
         <span>
-          Picks are based on artists you&apos;ve seen, how much fun you rated them,
-          places you&apos;ve traveled for shows
-          {data?.similarArtistsEnabled ? ", and similar artists" : ""}.
+          Artists you <strong>haven&apos;t seen yet</strong>, picked from your taste
+          {data.similarArtistsEnabled
+            ? " and similar-artist suggestions"
+            : " and concerts in states you visit often"}
+          .
         </span>
       </div>
 
+      {data.needsLastFm ? (
+        <div className="alert alert-warning text-sm">
+          <span>
+            Add a free <strong>LASTFM_API_KEY</strong> for better new-artist matches
+            (optional setup below).
+          </span>
+        </div>
+      ) : null}
+
       {data?.preferences && data.preferences.length > 0 ? (
         <section>
-          <h2 className="text-lg font-semibold mb-3">Your top artists</h2>
+          <h2 className="text-lg font-semibold mb-3">Artists you already know</h2>
+          <p className="text-xs opacity-70 mb-2">
+            We use these for taste — they won&apos;t appear in the list below.
+          </p>
           <ArtistTasteList preferences={data.preferences} compact />
         </section>
       ) : null}
 
       {data?.recommendations.length === 0 ? (
-        <EmptyState message="No upcoming shows found right now for your artists. Check back later — tours get announced all the time!" />
+        <EmptyState message="No upcoming shows found for new artists right now. Add more concerts or try again later when tours are announced!" />
       ) : (
         <section>
           <h2 className="text-lg font-semibold mb-3">
-            Upcoming shows you might attend ({data.recommendations.length})
+            New artists to check out ({data.recommendations.length})
           </h2>
           <div className="grid gap-4 md:grid-cols-2">
             {data.recommendations.map((show) => (

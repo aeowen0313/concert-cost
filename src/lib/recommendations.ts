@@ -1,59 +1,78 @@
 import type { ArtistPreference } from "@/lib/artist-preferences";
 import type { UpcomingShow } from "@/lib/ticketmaster";
 
+export type SimilarArtistMeta = {
+  basedOn: string;
+  avgFun: number;
+};
+
 export type RecommendedShow = UpcomingShow & {
   matchScore: number;
   matchReasons: string[];
-  source: "repeat" | "similar" | "region";
+  source: "similar" | "discovery";
 };
 
-function normalizeArtist(name: string): string {
+export function normalizeArtist(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-export function scoreUpcomingShow(
+export function buildSeenArtistSet(preferences: ArtistPreference[]): Set<string> {
+  return new Set(preferences.map((p) => normalizeArtist(p.artist)));
+}
+
+/** True if this show's artist is one the user already logged */
+export function isArtistAlreadySeen(
+  artistName: string,
+  seenArtistNorms: Set<string>
+): boolean {
+  const showNorm = normalizeArtist(artistName);
+  if (!showNorm) return true;
+
+  if (seenArtistNorms.has(showNorm)) return true;
+
+  for (const seen of seenArtistNorms) {
+    if (showNorm.includes(seen) || seen.includes(showNorm)) return true;
+  }
+  return false;
+}
+
+/** Score only shows for artists the user has NOT seen before */
+export function scoreNewArtistShow(
   show: UpcomingShow,
-  preferences: ArtistPreference[],
-  preferredStates: string[],
-  similarArtistSet: Set<string>
+  seenArtistNorms: Set<string>,
+  similarArtistMap: Map<string, SimilarArtistMeta>,
+  preferredStates: string[]
 ): RecommendedShow | null {
+  if (isArtistAlreadySeen(show.artist, seenArtistNorms)) {
+    return null;
+  }
+
   const showArtistNorm = normalizeArtist(show.artist);
   const reasons: string[] = [];
   let score = 0;
-  let source: RecommendedShow["source"] = "region";
+  let source: RecommendedShow["source"] = "discovery";
 
-  for (const pref of preferences) {
-    const prefNorm = normalizeArtist(pref.artist);
-    if (
-      showArtistNorm === prefNorm ||
-      showArtistNorm.includes(prefNorm) ||
-      prefNorm.includes(showArtistNorm)
-    ) {
-      score += 50 + pref.showCount * 10 + pref.avgFun * 5;
-      reasons.push(
-        `You've seen ${pref.artist} ${pref.showCount} time${pref.showCount > 1 ? "s" : ""} (avg fun ${pref.avgFun}/10)`
-      );
-      source = "repeat";
-      break;
-    }
-  }
-
-  if (similarArtistSet.has(showArtistNorm)) {
-    score += 35;
-    reasons.push("Similar to artists you rated highly");
+  const similarInfo = similarArtistMap.get(showArtistNorm);
+  if (similarInfo) {
+    score += 45 + similarInfo.avgFun * 6;
+    reasons.push(
+      `You haven't seen them yet — similar to ${similarInfo.basedOn} (avg fun ${similarInfo.avgFun}/10)`
+    );
     source = "similar";
   }
 
   if (show.state && preferredStates.includes(show.state.toUpperCase())) {
-    score += 18;
-    reasons.push(`In ${show.state}, where you've been to shows before`);
-    if (source === "region") source = "region";
+    score += 16;
+    reasons.push(`Playing in ${show.state}, where you often go to concerts`);
   }
 
-  if (score <= 0) return null;
-
-  if (reasons.length === 0) {
-    reasons.push("Matches your concert taste profile");
+  if (score <= 0) {
+    if (show.state && preferredStates.includes(show.state.toUpperCase())) {
+      score = 14;
+      reasons.push("New artist near places you usually see live music");
+    } else {
+      return null;
+    }
   }
 
   return {
