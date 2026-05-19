@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
+import { fetchUserProfile, getDisplayName } from "@/lib/fetch-profile";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function MainLayout({
@@ -16,7 +17,15 @@ export default async function MainLayout({
     redirect("/login");
   }
 
+  const profile = await fetchUserProfile(user.id);
+  const displayName = getDisplayName(profile, user.email);
+
   return (
-    <AppShell userEmail={user.email ?? "Logged in user"}>{children}</AppShell>
+    <AppShell
+      displayName={displayName}
+      avatarUrl={profile?.avatar_url ?? null}
+    >
+      {children}
+    </AppShell>
   );
 }

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { getInitials } from "@/lib/profile-utils";
 import { ThemeSelector } from "@/components/ThemeSelector";
 
 const NAV = [
@@ -13,13 +14,15 @@ const NAV = [
 ];
 
 type AppShellProps = {
-  userEmail: string;
+  displayName: string;
+  avatarUrl: string | null;
   children: React.ReactNode;
 };
 
-export function AppShell({ userEmail, children }: AppShellProps) {
+export function AppShell({ displayName, avatarUrl, children }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const initials = getInitials(displayName);
 
   async function handleLogout() {
     const supabase = createClient();
@@ -40,9 +43,26 @@ export function AppShell({ userEmail, children }: AppShellProps) {
           </p>
         </div>
         <div className="flex-none gap-2 items-center flex-wrap justify-end">
-          <span className="text-xs sm:text-sm opacity-80 truncate max-w-[10rem] sm:max-w-none">
-            {userEmail}
-          </span>
+          <Link
+            href="/profile"
+            className={`flex items-center gap-2 rounded-full pr-2 hover:bg-base-200 transition ${
+              pathname === "/profile" ? "bg-base-200 ring-2 ring-primary" : ""
+            }`}
+            title="Edit profile"
+          >
+            <div className="avatar placeholder">
+              <div className="w-9 rounded-full bg-primary text-primary-content">
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt="" className="object-cover" />
+                ) : (
+                  <span className="text-sm font-semibold">{initials}</span>
+                )}
+              </div>
+            </div>
+            <span className="text-sm font-medium max-w-[8rem] sm:max-w-[12rem] truncate">
+              {displayName}
+            </span>
+          </Link>
           <ThemeSelector className="hidden md:block" />
           <button type="button" className="btn btn-ghost btn-sm" onClick={handleLogout}>
             Log out
@@ -70,3 +90,4 @@ export function AppShell({ userEmail, children }: AppShellProps) {
     </div>
   );
 }
+
